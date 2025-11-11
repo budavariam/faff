@@ -66,7 +66,7 @@ Specification for Conventional Commits:
 - BREAKING-CHANGE MUST be synonymous with BREAKING CHANGE, when used as a token in a footer.'
 # Spinner characters for progress indication
 readonly SPINNER_CHARS=( "⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏" )
-readonly VERSION="0.1.1"
+readonly VERSION="0.1.1.a"
 FAFF_MODEL=${FAFF_MODEL:-"qwen2.5-coder:7b"}
 OLLAMA_HOST=${OLLAMA_HOST:-"localhost"}
 OLLAMA_PORT=${OLLAMA_PORT:-"11434"}
@@ -75,6 +75,36 @@ OLLAMA_API_CHAT="${OLLAMA_BASE_URL}/api/chat"
 OLLAMA_API_BASE="${OLLAMA_BASE_URL}/api"
 # Timeout in seconds for Ollama API calls
 FAFF_TIMEOUT=${FAFF_TIMEOUT:-180}
+# Default context lines for git diff
+DIFF_CONTEXT=${DIFF_CONTEXT:-0}
+
+# Show usage information
+function show_usage() {
+    cat << EOF
+faff v${VERSION} - AI-powered git commit message generator
+
+Usage: faff [OPTIONS]
+
+Options:
+  -c, --context NUM    Number of context lines in git diff (default: 0)
+                       Use 0 for full function context
+  -h, --help           Show this help message
+  -v, --version        Show version information
+
+Environment Variables:
+  FAFF_MODEL           Ollama model to use (default: qwen2.5-coder:7b)
+  OLLAMA_HOST          Ollama host (default: localhost)
+  OLLAMA_PORT          Ollama port (default: 11434)
+  FAFF_TIMEOUT         API timeout in seconds (default: 180)
+
+Examples:
+  faff                 Generate commit with default context (3 lines)
+  faff -c 0            Generate commit with full function context
+  faff -c 5            Generate commit with 5 lines of context
+  faff --context 10    Generate commit with 10 lines of context
+EOF
+}
+
 
 # Calculate next spinner index
 function next_spinner_index() {
@@ -138,8 +168,15 @@ function show_spinner() {
 
 # Get the staged git diff
 function get_git_diff() {
-    git --no-pager diff --staged --no-color --function-context | tr -d '\r'
+    if [ "$DIFF_CONTEXT" -eq 0 ]; then
+        # Use function context (shows whole functions)
+        git --no-pager diff --staged --no-color --function-context | tr -d '\r'
+    else
+        # Use specified number of context lines
+        git --no-pager diff --staged --no-color "-U${DIFF_CONTEXT}" | tr -d '\r'
+    fi
 }
+
 
 # Function to generate the commit message using Ollama
 function generate_commit_message() {
@@ -405,8 +442,38 @@ function confirm_commit() {
     esac
 }
 
+# Parse command line arguments
+function parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -c|--context)
+                if [[ -z "$2" ]] || [[ "$2" =~ ^- ]]; then
+                    error_exit "Otpion $1 requires a numeric argument"
+                fi
+                if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+                    error_exit "Context value must be a positive number, got: $2"
+                fi
+                DIFF_CONTEXT="$2"
+                shift 2
+                ;;
+            -h|--help)
+                show_usage
+                exit 0
+                ;;
+            -v|--version)
+                echo "faff v${VERSION}"
+                exit 0
+                ;;
+            *)
+                error_exit "Unknown option: $1\nUse -h or --help for usage information"
+                ;;
+        esac
+    done
+}
+
 # Main script logic
 function main() {
+    parse_args "$@"
     check_dependencies
 
     local diff
@@ -419,7 +486,7 @@ function main() {
     check_ollama_service_and_model
 
     local commit_message
-    echo "Generating commit message with Ollama..."
+    echo "Generating commit message with Ollama (context: ${DIFF_CONTEXT} lines)..."
     commit_message=$(generate_commit_message "$diff")
 
     if [ -z "$commit_message" ]; then
@@ -429,4 +496,4 @@ function main() {
     confirm_commit "$commit_message"
 }
 
-main
+main "$@"
